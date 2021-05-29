@@ -183,7 +183,7 @@ static void StartEditTocItem(HWND hwnd, TreeCtrl* treeCtrl, TocItem* ti) {
         }
 
         SetTocItemFromTocEditArgs(ti, args);
-        treeCtrl->UpdateItem(ti);
+        treeCtrl->UpdateItem((TreeItem)ti);
     });
 }
 
@@ -470,7 +470,7 @@ void TocEditorWindow::TreeContextMenu(ContextMenuEvent* ev) {
     ev->didHandle = true;
 
     POINT pt{};
-    TreeItem* menuTreeItem = GetOrSelectTreeItemAtPos(ev, pt);
+    TreeItem menuTreeItem = GetOrSelectTreeItemAtPos(ev, pt);
     if (!menuTreeItem) {
         return;
     }
@@ -644,14 +644,14 @@ TocEditorArgs::~TocEditorArgs() {
 }
 
 void TocEditorWindow::RemoveItem() {
-    TreeItem* sel = treeCtrl->GetSelection();
+    TreeItem sel = treeCtrl->GetSelection();
     CrashIf(!sel);
-    TocItem* ti = (TocItem*)sel;
+    auto ti = (TocItem*)sel;
     RemoveTocItem(ti, true);
 }
 
 void TocEditorWindow::UpdateRemoveTocItemButtonStatus() {
-    TreeItem* sel = treeCtrl->GetSelection();
+    TreeItem sel = treeCtrl->GetSelection();
     bool isEnabled = CanRemoveTocItem(treeCtrl, (TocItem*)sel);
     btnRemoveTocItem->SetIsEnabled(isEnabled);
 }

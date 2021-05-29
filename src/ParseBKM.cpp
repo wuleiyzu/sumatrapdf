@@ -93,7 +93,7 @@ static void SerializeBookmarksRec(TocItem* node, int level, str::Str& s) {
         }
 
         s.AppendView(indentStr);
-        WCHAR* title = node->Text();
+        WCHAR* title = node->title;
         AutoFree titleA = strconv::WstrToUtf8(title);
         sv::AppendMaybeQuoted(titleA.AsView(), s);
         auto flags = node->fontFlags;

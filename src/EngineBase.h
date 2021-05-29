@@ -176,7 +176,7 @@ extern Kind kindTocFzOutlineAttachment;
 extern Kind kindTocDjvu;
 
 // an item in a document's Table of Content
-struct TocItem : TreeItem {
+struct TocItem {
     // each engine has a raw representation of the toc item which
     // we want to access. Not (yet) supported by all engines
     // other values come from parsing this value
@@ -228,7 +228,7 @@ struct TocItem : TreeItem {
 
     explicit TocItem(TocItem* parent, const WCHAR* title, int pageNo);
 
-    ~TocItem() override;
+    ~TocItem();
 
     void AddSibling(TocItem* sibling);
     void AddSiblingAtEnd(TocItem* sibling);
@@ -239,14 +239,9 @@ struct TocItem : TreeItem {
 
     PageDestination* GetPageDestination();
 
-    // TreeItem
-    TreeItem* Parent() override;
-    int ChildCount() override;
-    TreeItem* ChildAt(int n) override;
-    bool IsExpanded() override;
-    bool IsChecked() override;
-    WCHAR* Text() override;
-
+    int ChildCount();
+    TocItem* ChildAt(int n);
+    bool IsExpanded();
     bool PageNumbersMatch() const;
 };
 
@@ -261,7 +256,15 @@ struct TocTree : TreeModel {
 
     // TreeModel
     int RootCount() override;
-    TreeItem* RootAt(int n) override;
+    TreeItem RootAt(int n) override;
+
+    WCHAR* ItemText(TreeItem) override;
+    TreeItem ItemParent(TreeItem) override;
+    int ItemChildCount(TreeItem) override;
+    TreeItem ItemChildAt(TreeItem, int index) override;
+    bool ItemIsExpanded(TreeItem) override;
+    bool ItemIsChecked(TreeItem) override;
+    TreeItem ItemNull() override;
 };
 
 TocTree* CloneTocTree(TocTree*, bool removeUnchecked);

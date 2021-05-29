@@ -78,8 +78,9 @@ static void DragEnd(TreeCtrl* w) {
     SetCursorCached(IDC_ARROW);
     // ShowCursor(TRUE);
     w->isDragging = false;
-    w->draggedItem = nullptr;
-    w->dragTargetItem = nullptr;
+    auto tm = w->treeModel;
+    w->draggedItem = tm->ItemNull();
+    w->dragTargetItem = tm->ItemNull();
     HWND hwndParent = GetParent(w->hwnd);
     UnregisterHandlerForMessage(hwndParent, WM_MOUSEMOVE);
     UnregisterHandlerForMessage(hwndParent, WM_LBUTTONUP);
@@ -174,7 +175,7 @@ static TVITEMW* GetTVITEM(TreeCtrl* tree, HTREEITEM hItem) {
     return ti;
 }
 
-static TVITEMW* GetTVITEM(TreeCtrl* tree, TreeItem* ti) {
+static TVITEMW* GetTVITEM(TreeCtrl* tree, TreeItem ti) {
     HTREEITEM hi = tree->GetHandleByTreeItem(ti);
     return GetTVITEM(tree, hi);
 }
@@ -547,27 +548,27 @@ bool TreeCtrl::Create() {
     return true;
 }
 
-bool TreeCtrl::IsExpanded(TreeItem* ti) {
+bool TreeCtrl::IsExpanded(TreeItem ti) {
     auto state = GetItemState(ti);
     return state.isExpanded;
 }
 
 // https://docs.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-treeview_getitemrect
-bool TreeCtrl::GetItemRect(TreeItem* ti, bool justText, RECT& r) {
+bool TreeCtrl::GetItemRect(TreeItem ti, bool justText, RECT& r) {
     HTREEITEM hi = GetHandleByTreeItem(ti);
     BOOL b = toBOOL(justText);
     BOOL ok = TreeView_GetItemRect(hwnd, hi, &r, b);
     return ok == TRUE;
 }
 
-TreeItem* TreeCtrl::GetSelection() {
+TreeItem TreeCtrl::GetSelection() {
     HTREEITEM hi = TreeView_GetSelection(hwnd);
     return GetTreeItemByHandle(hi);
 }
 
-bool TreeCtrl::SelectItem(TreeItem* ti) {
+bool TreeCtrl::SelectItem(TreeItem ti) {
     HTREEITEM hi{nullptr};
-    if (ti != nullptr) {
+    if (ti != treeModel->ItemNull()) {
         hi = GetHandleByTreeItem(ti);
     }
     BOOL ok = TreeView_SelectItem(hwnd, hi);
@@ -614,7 +615,7 @@ TreeCtrl::~TreeCtrl() {
     // DeleteObject(w->bgBrush);
 }
 
-str::WStr TreeCtrl::GetDefaultTooltip(TreeItem* ti) {
+str::WStr TreeCtrl::GetDefaultTooltip(TreeItem ti) {
     auto hItem = GetHandleByTreeItem(ti);
     WCHAR buf[INFOTIPSIZE + 1] = {}; // +1 just in case
 
@@ -629,9 +630,9 @@ str::WStr TreeCtrl::GetDefaultTooltip(TreeItem* ti) {
 }
 
 // get the item at a given (x,y) position in the window
-TreeItem* TreeCtrl::GetItemAt(int x, int y) {
+TreeItem TreeCtrl::GetItemAt(int x, int y) {
     if (x < 0 || y < 0) {
-        return nullptr;
+        return treeModelItemNull;
     }
     TVHITTESTINFO ht{};
     ht.pt.x = x;
@@ -639,45 +640,45 @@ TreeItem* TreeCtrl::GetItemAt(int x, int y) {
 
     TreeView_HitTest(hwnd, &ht);
     if ((ht.flags & TVHT_ONITEM) == 0) {
-        return nullptr;
+        return treeModelItemNull;
     }
     return GetTreeItemByHandle(ht.hItem);
 }
 
 // TODO: speed up by storing the pointer as TVINSERTSTRUCTW.lParam
-HTREEITEM TreeCtrl::GetHandleByTreeItem(TreeItem* item) {
+HTREEITEM TreeCtrl::GetHandleByTreeItem(TreeItem ti) {
     for (auto t : this->insertedItems) {
-        auto* i = std::get<0>(t);
-        if (i == item) {
+        auto i = std::get<0>(t);
+        if (i == ti) {
             return std::get<1>(t);
         }
     }
     return nullptr;
 }
 
-TreeItem* TreeCtrl::GetTreeItemByHandle(HTREEITEM item) {
+TreeItem TreeCtrl::GetTreeItemByHandle(HTREEITEM item) {
     for (auto t : this->insertedItems) {
         auto* i = std::get<1>(t);
         if (i == item) {
             return std::get<0>(t);
         }
     }
-    return nullptr;
+    return treeModelItemNull;
 }
 
-void FillTVITEM(TVITEMEXW* tvitem, TreeItem* ti, bool withCheckboxes) {
+void FillTVITEM(TVITEMEXW* tvitem, TreeModel* tm, TreeItem ti, bool withCheckboxes) {
     uint mask = TVIF_TEXT | TVIF_PARAM | TVIF_STATE;
     tvitem->mask = mask;
 
     uint stateMask = TVIS_EXPANDED;
     uint state = 0;
-    if (ti->IsExpanded()) {
+    if (tm->ItemIsExpanded(ti)) {
         state = TVIS_EXPANDED;
     }
 
     if (withCheckboxes) {
         stateMask |= TVIS_STATEIMAGEMASK;
-        bool isChecked = ti->IsChecked();
+        bool isChecked = tm->ItemIsChecked(ti);
         uint imgIdx = isChecked ? 2 : 1;
         uint imgState = INDEXTOSTATEIMAGEMASK(imgIdx);
         state |= imgState;
@@ -685,28 +686,28 @@ void FillTVITEM(TVITEMEXW* tvitem, TreeItem* ti, bool withCheckboxes) {
 
     tvitem->state = state;
     tvitem->stateMask = stateMask;
-    tvitem->lParam = reinterpret_cast<LPARAM>(ti);
-    auto title = ti->Text();
+    tvitem->lParam = static_cast<LPARAM>(ti);
+    auto title = tm->ItemText(ti);
     tvitem->pszText = title;
 }
 
-static HTREEITEM insertItem(TreeCtrl* tree, HTREEITEM parent, TreeItem* ti) {
+static HTREEITEM insertItem(TreeCtrl* treeCtrl, HTREEITEM parent, TreeItem ti) {
     TVINSERTSTRUCTW toInsert{};
 
     toInsert.hParent = parent;
     toInsert.hInsertAfter = TVI_LAST;
 
     TVITEMEXW* tvitem = &toInsert.itemex;
-    FillTVITEM(tvitem, ti, tree->withCheckboxes);
-    bool onDemand = tree->onTreeGetDispInfo != nullptr;
+    FillTVITEM(tvitem, treeCtrl->treeModel, ti, treeCtrl->withCheckboxes);
+    bool onDemand = treeCtrl->onTreeGetDispInfo != nullptr;
     if (onDemand) {
         tvitem->pszText = LPSTR_TEXTCALLBACK;
     }
-    HTREEITEM res = TreeView_InsertItem(tree->hwnd, &toInsert);
+    HTREEITEM res = TreeView_InsertItem(treeCtrl->hwnd, &toInsert);
     return res;
 }
 
-bool TreeCtrl::UpdateItem(TreeItem* ti) {
+bool TreeCtrl::UpdateItem(TreeItem ti) {
     HTREEITEM ht = GetHandleByTreeItem(ti);
     CrashIf(!ht);
     if (!ht) {
@@ -715,7 +716,7 @@ bool TreeCtrl::UpdateItem(TreeItem* ti) {
 
     TVITEMEXW tvitem;
     tvitem.hItem = ht;
-    FillTVITEM(&tvitem, ti, withCheckboxes);
+    FillTVITEM(&tvitem, treeModel, ti, withCheckboxes);
     bool onDemand = onTreeGetDispInfo != nullptr;
     if (onDemand) {
         tvitem.pszText = LPSTR_TEXTCALLBACK;
@@ -724,26 +725,27 @@ bool TreeCtrl::UpdateItem(TreeItem* ti) {
     return ok ? true : false;
 }
 
-static void PopulateTreeItem(TreeCtrl* tree, TreeItem* item, HTREEITEM parent) {
-    int n = item->ChildCount();
+static void PopulateTreeItem(TreeCtrl* treeCtrl, TreeItem item, HTREEITEM parent) {
+    auto tm = treeCtrl->treeModel;
+    int n = tm->ItemChildCount(item);
     for (int i = 0; i < n; i++) {
-        auto* ti = item->ChildAt(i);
-        HTREEITEM h = insertItem(tree, parent, ti);
+        auto ti = tm->ItemChildAt(item, i);
+        HTREEITEM h = insertItem(treeCtrl, parent, ti);
         auto v = std::make_tuple(ti, h);
-        tree->insertedItems.Append(v);
-        PopulateTreeItem(tree, ti, h);
+        treeCtrl->insertedItems.Append(v);
+        PopulateTreeItem(treeCtrl, ti, h);
     }
 }
 
-static void PopulateTree(TreeCtrl* tree, TreeModel* tm) {
+static void PopulateTree(TreeCtrl* treeCtrl, TreeModel* tm) {
     HTREEITEM parent = nullptr;
     int n = tm->RootCount();
     for (int i = 0; i < n; i++) {
-        auto* ti = tm->RootAt(i);
-        HTREEITEM h = insertItem(tree, parent, ti);
+        auto ti = tm->RootAt(i);
+        HTREEITEM h = insertItem(treeCtrl, parent, ti);
         auto v = std::make_tuple(ti, h);
-        tree->insertedItems.Append(v);
-        PopulateTreeItem(tree, ti, h);
+        treeCtrl->insertedItems.Append(v);
+        PopulateTreeItem(treeCtrl, ti, h);
     }
 }
 
@@ -756,6 +758,7 @@ void TreeCtrl::SetTreeModel(TreeModel* tm) {
     TreeView_DeleteAllItems(hwnd);
 
     treeModel = tm;
+    treeModelItemNull = tm->ItemNull();
     PopulateTree(this, tm);
     ResumeRedraw();
 
@@ -763,20 +766,20 @@ void TreeCtrl::SetTreeModel(TreeModel* tm) {
     RedrawWindow(hwnd, nullptr, nullptr, flags);
 }
 
-void TreeCtrl::SetCheckState(TreeItem* item, bool enable) {
+void TreeCtrl::SetCheckState(TreeItem item, bool enable) {
     HTREEITEM hi = GetHandleByTreeItem(item);
     CrashIf(!hi);
     TreeView_SetCheckState(hwnd, hi, enable);
 }
 
-bool TreeCtrl::GetCheckState(TreeItem* item) {
+bool TreeCtrl::GetCheckState(TreeItem item) {
     HTREEITEM hi = GetHandleByTreeItem(item);
     CrashIf(!hi);
     auto res = TreeView_GetCheckState(hwnd, hi);
     return res != 0;
 }
 
-TreeItemState TreeCtrl::GetItemState(TreeItem* ti) {
+TreeItemState TreeCtrl::GetItemState(TreeItem ti) {
     TreeItemState res;
 
     TVITEMW* item = GetTVITEM(this, ti);
@@ -811,18 +814,19 @@ Size TreeCtrl::GetIdealSize() {
 // if via right-click, selects the item under the cursor
 // in both cases can return null
 // sets pt to screen position (for context menu coordinates)
-TreeItem* GetOrSelectTreeItemAtPos(ContextMenuEvent* args, POINT& pt) {
+TreeItem GetOrSelectTreeItemAtPos(ContextMenuEvent* args, POINT& pt) {
     TreeCtrl* treeCtrl = (TreeCtrl*)args->w;
+    TreeModel* tm = treeCtrl->treeModel;
     HWND hwnd = treeCtrl->hwnd;
 
-    TreeItem* ti = nullptr;
+    TreeItem ti{tm->ItemNull()};
     pt = {args->mouseWindow.x, args->mouseWindow.y};
     if (pt.x == -1 || pt.y == -1) {
         // no mouse position when launched via keyboard shortcut
         // use position of selected item to show menu
         ti = treeCtrl->GetSelection();
-        if (!ti) {
-            return nullptr;
+        if (ti == tm->ItemNull()) {
+            return ti;
         }
         RECT rcItem;
         if (treeCtrl->GetItemRect(ti, true, rcItem)) {
@@ -833,9 +837,9 @@ TreeItem* GetOrSelectTreeItemAtPos(ContextMenuEvent* args, POINT& pt) {
         }
     } else {
         ti = treeCtrl->GetItemAt(pt.x, pt.y);
-        if (!ti) {
+        if (ti == tm->ItemNull()) {
             // only show context menu if over a node in tree
-            return nullptr;
+            return ti;
         }
         // context menu acts on this item so select it
         // for better visual feedback to the user
